@@ -6,7 +6,7 @@
 
 namespace JITSim {
   template <typename T>
-  static llvm::StructType *ConstructStructType(const std::vector<T> &members, llvm::LLVMContext &context, const std::string &name = "")
+  static llvm::StructType * ConstructStructType(const std::vector<T> &members, llvm::LLVMContext &context, const std::string &name = "")
   {
     std::vector<llvm::Type *> elem_types;
     for (unsigned i = 0; i < members.size(); i++) {

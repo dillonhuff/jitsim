@@ -64,7 +64,9 @@ FunctionEnvironment ModuleEnvironment::makeFunction(const std::string &name, Fun
 {
   Function *fn = makeFunctionDecl(name, function_type);
 
-  return FunctionEnvironment(fn, this);
+  functions.emplace_back(fn, this);
+
+  return functions.back();
 }
 
 std::string ModuleEnvironment::getIRStr() const

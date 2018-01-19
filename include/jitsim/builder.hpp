@@ -15,6 +15,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <memory>
+#include <deque>
 
 namespace JITSim {
 
@@ -59,11 +60,12 @@ public:
 
 class ModuleEnvironment {
 private:
-  std::unique_ptr<llvm::Module> module;
+  std::shared_ptr<llvm::Module> module;
   llvm::LLVMContext *context;
   std::unique_ptr<llvm::DIBuilder> di_builder;
 
   std::unordered_map<std::string, llvm::Function *> named_functions;
+  std::deque<FunctionEnvironment> functions;
 public:
   ModuleEnvironment(std::unique_ptr<llvm::Module> &&module_, llvm::LLVMContext *context_)
     : module(move(module_)), context(context_), di_builder(std::make_unique<llvm::DIBuilder>(*module))
@@ -74,9 +76,9 @@ public:
 
   llvm::Function * getFunctionDecl(const std::string &name);
   llvm::Function * makeFunctionDecl(const std::string &name, llvm::FunctionType *function_type);
-  FunctionEnvironment makeFunction(const std::string &name, llvm::FunctionType *function_type);
+  FunctionEnvironment& makeFunction(const std::string &name, llvm::FunctionType *function_type);
 
-  std::unique_ptr<llvm::Module> returnModule() { return move(module); }
+  std::shared_ptr<llvm::Module> getModule() { return module; }
   std::string getIRStr() const;
 
   bool verify() const;

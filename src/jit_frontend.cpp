@@ -14,6 +14,26 @@ static bool isPrimitive(const Definition &definition)
   return siminfo.isPrimitive();
 }
 
+static unsigned calcNumBytes(unsigned bits)
+{
+  unsigned bytes = bits / 8;
+  if (bits % 8 != 0) {
+    bytes++;
+  }
+
+  return bytes;
+}
+
+static unsigned calcNum64s(unsigned bytes)
+{
+  unsigned num64s = bytes / 8;
+  if (bytes % 8 != 0) {
+    num64s++;
+  }
+
+  return num64s;
+}
+
 template <typename T>
 LLVMStruct::LLVMStruct(const vector<T> &members,
                        const llvm::DataLayout &data_layout,
@@ -66,14 +86,9 @@ llvm::APInt LLVMStruct::getValue(int idx) const
 {
   const uint8_t *ptr = getMemberAddr(idx);
   int bits = getMemberBits(idx);
-  int bytes = bits / 8;
-  if (bits % 8 != 0) {
-    bytes++;
-  }
-  int num64s = bits / 64;
-  if (bits % 64 != 0) {
-    num64s++;
-  }
+  int bytes = calcNumBytes(bits);
+
+  int num64s = calcNum64s(bytes);
   vector<uint64_t> safe_arr(num64s, 0);
   memcpy(safe_arr.data(), ptr, bytes);
 
@@ -276,10 +291,7 @@ vector<uint8_t> & JITFrontend::updateDebugInfo(const vector<string> &inst_names,
     num_bits = sink->getWidth();
   }
 
-  unsigned num_bytes = num_bits / 8;
-  if (num_bits % 8 != 0) {
-    num_bytes++;
-  }
+  unsigned num_bytes = calcNumBytes(num_bits);
   
   assert(num_bytes);
   vector<uint8_t> store(num_bytes, 0);
@@ -298,10 +310,8 @@ llvm::APInt JITFrontend::getValue(const vector<string> &inst_names, const string
   vector<uint8_t> &data = updateDebugInfo(inst_names, input);
   get_values_ptr(gv_in.getData(), state.data());
 
-  int num64s = data.size() / 8;
-  if (data.size() % 8 != 0) {
-    num64s++;
-  }
+  int num64s = calcNum64s(data.size());
+
   vector<uint64_t> safe_arr(num64s, 0);
   memcpy(safe_arr.data(), data.data(), data.size());
 
