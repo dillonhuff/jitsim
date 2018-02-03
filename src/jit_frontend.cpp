@@ -110,23 +110,31 @@ void LLVMStruct::dump() const
 
 void JITFrontend::addDefinitionFunctions(const Definition &defn)
 {
-  jit.addLazyFunction(defn.getSafeName() + "_update_state", [this, &defn]() {
-    return MakeUpdateState(builder, defn);
+  jit.addLazyModule(defn.getSafeName() + "_update_state", [this, &defn]() {
+    ModuleEnvironment env = MakeUpdateState(builder, defn);
+    return env.getModule();
   });
 
-  jit.addLazyFunction(defn.getSafeName() + "_compute_output", [this, &defn]() {
-    return MakeComputeOutput(builder, defn);
+  jit.addLazyModule(defn.getSafeName() + "_compute_output", [this, &defn]() {
+    ModuleEnvironment env = MakeComputeOutput(builder, defn);
+    return env.getModule();
   });
 
-  jit.addLazyFunction(defn.getSafeName() + "_state_deps", [this, &defn]() {
-    return MakeStateDeps(builder, defn);
-  }, [](auto module) {
+  jit.addLazyModule(defn.getSafeName() + "_state_deps", [this, &defn]() {
+    ModuleEnvironment env = MakeStateDeps(builder, defn);
+    shared_ptr<llvm::Module> module = env.getModule();
+
     return module;
   });
 
-  jit.addLazyFunction(defn.getSafeName() + "_output_deps", [this, &defn]() {
-    return MakeOutputDeps(builder, defn);
-  }, [this, &defn](auto module) {
+  jit.addLazyModule(defn.getSafeName() + "_output_deps", [this, &defn]() {
+    ModuleEnvironment env = MakeOutputDeps(builder, defn);
+    shared_ptr<lldm::Module> module = env.getModule();
+
+    return module;
+  });
+  
+  [this, &defn](auto module) {
     auto iter = debug_info.debug_values.find(&defn);
     if (iter == debug_info.debug_values.end()) {
       return module;
@@ -146,6 +154,7 @@ void JITFrontend::addDefinitionFunctions(const Definition &defn)
       llvm::BasicBlock *last_bb = &func->back();
       llvm::BasicBlock *debug_block = llvm::BasicBlock::Create(builder.getContext(), "debug_block", func);
       // Rewrite every predecessor of the return block to instead jump to the debug block
+      // This potentially rewrites previous debug blocks
       vector<llvm::Instruction *> terms;
       for (auto pred : llvm::predecessors(last_bb)) {
         llvm::Instruction *term = pred->getTerminator();
@@ -171,6 +180,8 @@ void JITFrontend::addDefinitionFunctions(const Definition &defn)
 
       llvm::Value *addr = llvm::Constant::getIntegerValue(llvm_val->getType()->getPointerTo(), llvm::APInt(64, (uint64_t)val.store.data()));
       ir_builder.CreateStore(llvm_val, addr);
+
+      // Jump to the return block
       ir_builder.CreateBr(last_bb);
     }
 
@@ -187,15 +198,15 @@ void JITFrontend::addDefinitionFunctions(const Definition &defn)
 void JITFrontend::addWrappers(const Definition &top)
 {
   jit.addLazyFunction("update_state", [this, &top]() {
-    return MakeUpdateStateWrapper(builder, top);
+    return MakeUpdateStateWrapper(builder, top).getModule();
   });
 
   jit.addLazyFunction("compute_output", [this, &top]() {
-    return MakeComputeOutputWrapper(builder, top);
+    return MakeComputeOutputWrapper(builder, top).getModule();
   });
 
   jit.addLazyFunction("get_values", [this, &top]() {
-    return MakeGetValuesWrapper(builder, top);
+    return MakeGetValuesWrapper(builder, top).getModule();
   });
 }
 
@@ -306,7 +317,25 @@ vector<uint8_t> & JITFrontend::updateDebugInfo(const vector<string> &inst_names,
 
 llvm::APInt JITFrontend::getValue(const vector<string> &inst_names, const string &input)
 {
-  jit.purgeDebugModules();
+  const Definition *defn;
+  const Instance *inst;
+  unsigned inst_num;
+  tie(defn, inst, inst_num) = getDefnAndInst(top, inst_names);
+  bool is_output_dep = true;
+  const SimInfo &defn_info = defn->getSimInfo();
+  const SimInfo &inst_info = inst->getSimInfo();
+
+  if (inst->hasSource(input)) {
+
+  } else if (inst->hasSink(input)) {
+  } else {
+    assert(false);
+  }
+
+  // Only remove the one we care about
+  jit.removeModule(defn->getSafeName() + "_output_deps");
+  jit.removeModule(defn->getSafeName() + "_state_deps");
+
   vector<uint8_t> &data = updateDebugInfo(inst_names, input);
   get_values_ptr(gv_in.getData(), state.data());
 

@@ -29,12 +29,7 @@ JIT::JIT(TargetMachine &target_machine, const DataLayout &dl)
     optimize_layer(compile_layer,
                   [this](std::shared_ptr<Module> module) {
                     return optimizeModule(std::move(module));
-                  }),
-    debug_layer(optimize_layer,
-                [this](std::shared_ptr<Module> module) {
-                  return debugModule(std::move(module));
-                }),
-    debug_print_ir(false)
+                  })
 {
   llvm::sys::DynamicLibrary::LoadLibraryPermanently(nullptr);
 }
@@ -50,7 +45,7 @@ JIT::ModuleHandle JIT::addModule(std::shared_ptr<Module> module) {
     [&](const std::string &name) {
       if (auto sym = indirect_stubs_manager->findStub(name, false)) {
         return sym;
-      } else if (auto sym = debug_layer.findSymbol(name, false)) {
+      } else if (auto sym = optimize_layer.findSymbol(name, false)) {
         return sym;
       }
       return JITSymbol(nullptr);
@@ -63,7 +58,7 @@ JIT::ModuleHandle JIT::addModule(std::shared_ptr<Module> module) {
 
   // Add the set to the JIT with the resolver we created above and a newly
   // return created SectionMemoryManager.
-  ModuleHandle handle = cantFail(debug_layer.addModule(std::move(module), std::move(resolver)));
+  ModuleHandle handle = cantFail(optimize_layer.addModule(std::move(module), std::move(resolver)));
 
   return handle;
 }
@@ -71,7 +66,7 @@ JIT::ModuleHandle JIT::addModule(std::shared_ptr<Module> module) {
 JITSymbol JIT::findSymbol(const std::string name) {
   if (auto sym = indirect_stubs_manager->findStub(mangle(name), true)) {
     return sym;
-  } else if (auto sym = debug_layer.findSymbol(mangle(name), true)) {
+  } else if (auto sym = optimize_layer.findSymbol(mangle(name), true)) {
     return sym;
   } else {
     return JITSymbol(nullptr);
@@ -83,10 +78,25 @@ JITTargetAddress JIT::getSymbolAddress(const std::string name) {
 }
 
 void JIT::removeModule(ModuleHandle handle) {
-  cantFail(debug_layer.removeModule(handle));
+  cantFail(optimize_layer.removeModule(handle));
+}
+
+void JIT::removeModule(const std::string &name) {
+  auto iter = live_modules.find(name);
+  if (iter == live_modules.end()) {
+    return;
+  }
+
+  removeModule(iter->second);
 }
 
 std::shared_ptr<Module> JIT::optimizeModule(std::shared_ptr<Module> module) {
+  if (debug_print_ir) {
+    outs() << "\n==============\n";
+    outs() << *module;
+    outs() << "\n==============\n";
+  }
+
   // Create a function pass manager.
   auto fpm = make_unique<legacy::FunctionPassManager>(module.get());
 
@@ -112,12 +122,6 @@ std::shared_ptr<Module> JIT::optimizeModule(std::shared_ptr<Module> module) {
 
 std::shared_ptr<Module> JIT::debugModule(std::shared_ptr<Module> module)
 {
-  if (debug_print_ir) {
-    outs() << "\n==============\n";
-    outs() << *module;
-    outs() << "\n==============\n";
-  }
-
   auto iter = debug_functions.find(module->getName());
   if (iter == debug_functions.end()) {
     return module;
@@ -135,7 +139,7 @@ std::string JIT::mangle(const std::string name) {
 
 JITTargetAddress JIT::updateStub(const std::string &name)
 {
-  auto symbol = debug_layer.findSymbol(mangle(name), false);
+  auto symbol = optimize_layer.findSymbol(mangle(name), false);
   assert(symbol && "Couldn't find compiled function?");
 
   JITTargetAddress addr = cantFail(symbol.getAddress());
@@ -147,9 +151,8 @@ JITTargetAddress JIT::updateStub(const std::string &name)
   return addr;
 }
 
-void JIT::addLazyFunction(std::string name,
-                          std::function<std::shared_ptr<Module>()> module_generator,
-                          JIT::TransformFunction debug_transform)
+void JIT::addLazyModule(std::string name,
+                        std::function<std::shared_ptr<Module>()> module_generator)
 {
   auto compile_callback = compile_callback_manager->getCompileCallback();
   JITTargetAddress callback_address = compile_callback.getAddress();
@@ -158,18 +161,11 @@ void JIT::addLazyFunction(std::string name,
                                               callback_address,
                                               JITSymbolFlags::Exported));
 
-  bool is_debug = debug_transform != nullptr;
-  if (is_debug) {
-    debug_functions[name] = move(debug_transform);
-  }
-
   compile_callback.setCompileAction([this, name, module_generator, is_debug, callback_address]() {
     auto module = module_generator();
     std::shared_ptr<Module> shared_module(std::move(module));
     auto compiled_handle = addModule(shared_module);
-    if (is_debug) {
-      debug_modules.emplace_back(name, compiled_handle, shared_module);
-    }
+    live_modules[name] = compiled_handle;
 
     callback_addrs.erase(callback_address);
 

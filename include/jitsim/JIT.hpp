@@ -46,21 +46,22 @@ private:
   llvm::orc::RTDyldObjectLinkingLayer object_layer;
   llvm::orc::IRCompileLayer<decltype(object_layer), llvm::orc::SimpleCompiler> compile_layer;
   llvm::orc::IRTransformLayer<decltype(compile_layer), TransformFunction> optimize_layer;
-  llvm::orc::IRTransformLayer<decltype(optimize_layer), TransformFunction> debug_layer;
 
   std::shared_ptr<llvm::Module> optimizeModule(std::shared_ptr<llvm::Module> module);
-  std::shared_ptr<llvm::Module> debugModule(std::shared_ptr<llvm::Module> module);
   std::string mangle(const std::string name);
 
-  using ModuleHandle = decltype(debug_layer)::ModuleHandleT;
-  std::vector<std::tuple<std::string, ModuleHandle, std::shared_ptr<llvm::Module>>> debug_modules;
-  std::unordered_map<std::string, TransformFunction> debug_functions;
+  using ModuleHandle = decltype(optimize_layer)::ModuleHandleT;
+
+  // List of uncompiled callbacks for forcing AOT compilation
   std::unordered_set<llvm::JITTargetAddress> callback_addrs;
+
+  // List of handles to modules that have been compiled and are in use
+  std::unordered_map<std::string, ModuleHandle> live_modules;
+
+  bool debug_print_ir = false;
 
   void removeModule(ModuleHandle handle);
   llvm::JITTargetAddress updateStub(const std::string &name);
-
-  bool debug_print_ir;
 
 public:
 
@@ -71,13 +72,13 @@ public:
   llvm::JITTargetAddress getSymbolAddress(const std::string name);
 
   ModuleHandle addModule(std::shared_ptr<llvm::Module> module);
-  void addLazyFunction(std::string name, std::function<std::unique_ptr<llvm::Module>()> module_generator,
-                       TransformFunction debug_transform = nullptr);
+  void addLazyModule(std::string name,
+                     std::function<std::unique_ptr<llvm::Module>()> module_generator)
+
+  void removeModule(const std::string &name);
 
   void precompileIR();
   void precompileDumpIR();
-
-  void purgeDebugModules();
 };
 
 } // end namespace JITSim
